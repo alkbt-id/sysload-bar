@@ -22,7 +22,7 @@ enum Snapshot {
             let suffix = appearance == .aqua ? "light" : "dark"
             let host = NSHostingView(rootView: PopoverView().environmentObject(model)
                 .background(Color(nsColor: .windowBackgroundColor)))
-            host.frame = NSRect(x: 0, y: 0, width: 380, height: 860)
+            host.frame = NSRect(x: 0, y: 0, width: 380, height: 900)
             host.appearance = NSAppearance(named: appearance)
             let win = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
             win.appearance = NSAppearance(named: appearance)
@@ -31,7 +31,7 @@ enum Snapshot {
             try? await Task.sleep(nanoseconds: 500_000_000)
             save(host, to: dir.appendingPathComponent("panel-\(suffix).png"))
 
-            let img = StatusItemController.image(cpu: model.cpu.total, memory: model.memory.fraction)
+            let img = StatusItemController.image(cpu: model.cpu.total, temperature: model.temps.cpuMax)
             let bar = NSView(frame: NSRect(x: 0, y: 0, width: img.size.width + 24, height: 24))
             bar.appearance = NSAppearance(named: appearance)
             bar.wantsLayer = true
@@ -56,6 +56,7 @@ enum Snapshot {
                 t: now.addingTimeInterval(-AppModel.interval * Double(AppModel.historyLength - 1 - i)),
                 cpuUser: 0.08 + 0.05 * sin(x / 5) + burst + Double.random(in: 0...0.04),
                 cpuSystem: 0.05 + 0.02 * sin(x / 3) + burst / 3,
+                cpuTemp: 50 + burst * 60,
                 memory: 0.78 + 0.02 * sin(x / 20),
                 rx: max(0, 400_000 + 900_000 * sin(x / 7) + ((60...70).contains(i) ? 6_000_000 : 0)),
                 tx: max(0, 60_000 + 40_000 * sin(x / 4)))
@@ -67,6 +68,7 @@ enum Snapshot {
         m.netTotals = NetCounters(rx: 18_400_000_000, tx: 2_100_000_000)
         m.load = [2.68, 2.97, 3.67]
         m.gpu = GPUInfo(utilization: 0.24, memoryUsed: 1_810_000_000, memoryAllocated: 4_590_000_000)
+        m.temps = Temperatures(cpuMax: 59, cpuAvg: 54, ssd: 33, battery: 30)
         m.disk = DiskInfo(total: 1_000_000_000_000, free: 550_000_000_000)
         m.interface = ("en0", "192.168.1.24")
         m.processes = [

@@ -37,6 +37,7 @@ enum Palette {
 
     static let user = Color(.sRGB, red: 0.27, green: 0.55, blue: 0.95)
     static let system = Color(.sRGB, red: 0.92, green: 0.35, blue: 0.30)
+    static let temperature = Color(.sRGB, red: 0.98, green: 0.70, blue: 0.15)
     static let memory = Color(.sRGB, red: 0.62, green: 0.42, blue: 0.95)
     static let download = Color(.sRGB, red: 0.27, green: 0.55, blue: 0.95)
     static let upload = Color(.sRGB, red: 0.95, green: 0.55, blue: 0.20)
@@ -44,6 +45,11 @@ enum Palette {
 
 enum Fmt {
     static func percent(_ fraction: Double) -> String { "\(Int((fraction * 100).rounded()))%" }
+
+    static func degrees(_ t: Double?) -> String { t.map { "\(Int($0.rounded()))°" } ?? "—" }
+
+    /// Temperature as a 0...1 load for coloring: yellow from ~80°, red near 100° (Apple Silicon throttles ~105°).
+    static func heat(_ t: Double?) -> Double { (t ?? 0) / 100 }
 
     /// "1,2", "12", "123": one decimal only below 10.
     private static func number(_ v: Double) -> String {

@@ -6,6 +6,7 @@ final class AppModel: ObservableObject {
     struct Sample: Identifiable {
         let t: Date
         let cpuUser: Double, cpuSystem: Double   // 0...1
+        var cpuTemp: Double?                     // °C, hottest die sensor
         let memory: Double                       // 0...1
         let rx: Double, tx: Double               // bytes/s
         var id: Date { t }
@@ -21,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published var load: [Double] = [0, 0, 0]
     @Published var gpu: GPUInfo?
     @Published var disk: DiskInfo?
+    @Published var temps = Temperatures()
     @Published var interface: (name: String, ip: String?)?
     @Published var history: [Sample] = []
     @Published var processes: [ProcGroup] = []
@@ -31,6 +33,7 @@ final class AppModel: ObservableObject {
 
     let bootTime = Sampler.bootTime()
     private let sampler = Sampler()
+    private let thermal = Thermal()
     private let psQueue = DispatchQueue(label: "sysload.ps", qos: .utility)
     private var psRunning = false
     private var timer: Timer?
@@ -51,9 +54,10 @@ final class AppModel: ObservableObject {
     func tick() {
         now = Date()
         cpu = sampler.cpu()
+        temps = thermal.read()
         memory = sampler.memory()
         (net, netTotals) = sampler.network()
-        history.append(Sample(t: now, cpuUser: cpu.user, cpuSystem: cpu.system,
+        history.append(Sample(t: now, cpuUser: cpu.user, cpuSystem: cpu.system, cpuTemp: temps.cpuMax,
                               memory: memory.fraction, rx: net.rx, tx: net.tx))
         if history.count > Self.historyLength { history.removeFirst(history.count - Self.historyLength) }
         if panelOpen { refreshDetails() }

@@ -25,12 +25,14 @@ struct PopoverView: View {
             Divider()
             Footer().padding(.horizontal, 16).padding(.vertical, 10)
         }
-        .frame(width: 380, height: 860)
+        .frame(width: 380, height: 900)
     }
 
     private var rings: some View {
         HStack(spacing: 0) {
             Ring(title: "ЦП", value: model.cpu.total)
+            Ring(title: "Темп.", value: model.temps.cpuMax.map { Fmt.heat($0) }, text: Fmt.degrees(model.temps.cpuMax))
+                .help("Самый горячий датчик кристалла процессора")
             Ring(title: "Память", value: model.memory.fraction)
             Ring(title: "GPU", value: model.gpu?.utilization)
                 .help(model.gpu.map { "Память GPU: \(Fmt.bytes($0.memoryUsed, binary: true)) из \(Fmt.bytes($0.memoryAllocated, binary: true))" } ?? "")
@@ -46,6 +48,7 @@ struct PopoverView: View {
 private struct Ring: View {
     let title: String
     let value: Double?
+    var text: String?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -56,10 +59,10 @@ private struct Ring: View {
                     .stroke(Palette.color(value ?? 0), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(.easeOut(duration: 0.4), value: value)
-                Text(value.map(Fmt.percent) ?? "—")
+                Text(text ?? value.map(Fmt.percent) ?? "—")
                     .font(.system(size: 14, weight: .semibold, design: .rounded).monospacedDigit())
             }
-            .frame(width: 62, height: 62)
+            .frame(width: 58, height: 58)
             Text(title).font(.callout).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -129,10 +132,19 @@ private struct CPUSection: View {
         }
         VStack(alignment: .leading, spacing: 8) {
             Header(title: "Процессор", trailing: "\(Sampler.chipName) · \(ProcessInfo.processInfo.activeProcessorCount) ядер")
-            Chart(points) { p in
-                AreaMark(x: .value("Время", p.t), y: .value("%", p.v), stacking: .standard)
-                    .foregroundStyle(by: .value("Тип", p.kind))
-                    .interpolationMethod(.monotone)
+            Chart {
+                ForEach(points) { p in
+                    AreaMark(x: .value("Время", p.t), y: .value("%", p.v), stacking: .standard)
+                        .foregroundStyle(by: .value("Тип", p.kind))
+                        .interpolationMethod(.monotone)
+                }
+                // Temperature in °C shares the 0...100 axis with load in %.
+                ForEach(model.history.filter { $0.cpuTemp != nil }) { s in
+                    LineMark(x: .value("Время", s.t), y: .value("°C", s.cpuTemp!), series: .value("Ряд", "темп"))
+                        .foregroundStyle(Palette.temperature)
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 2]))
+                        .interpolationMethod(.monotone)
+                }
             }
             .chartForegroundStyleScale(["система": Palette.system, "пользователь": Palette.user])
             .chartLegend(.hidden)
@@ -149,6 +161,13 @@ private struct CPUSection: View {
                 KV(key: "Нагрузка 1 мин", value: String(format: "%.2f", model.load[0]))
                 KV(key: "5 мин", value: String(format: "%.2f", model.load[1]))
                 KV(key: "15 мин", value: String(format: "%.2f", model.load[2]))
+            }
+            Columns {
+                KV(key: "Темп. макс", value: Fmt.degrees(model.temps.cpuMax), swatch: Palette.temperature, valueColor: Palette.color(Fmt.heat(model.temps.cpuMax)))
+                KV(key: "Темп. средн.", value: Fmt.degrees(model.temps.cpuAvg))
+            } right: {
+                KV(key: "SSD", value: Fmt.degrees(model.temps.ssd))
+                KV(key: "Батарея", value: Fmt.degrees(model.temps.battery))
             }
         }
     }
