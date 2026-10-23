@@ -40,19 +40,24 @@ final class Thermal {
         // Usage page 0xff00 / usage 5: Apple vendor temperature sensors.
         _ = setMatching(client, ["PrimaryUsagePage": 0xff00, "PrimaryUsage": 5] as CFDictionary)
         let services = (copyServices(client)?.takeRetainedValue() as? [AnyObject]) ?? []
+        // Each read takes about a millisecond, so only the sensors shown are kept (20 of 46 on an M4 Max are CPU dies).
         sensors = services.compactMap { s in
             (copyProperty(s, "Product" as CFString)?.takeRetainedValue() as? String).map { ($0, s) }
-        }
+        }.filter { s in Self.shown.contains { s.name.hasPrefix($0) } }
     }
 
-    func read() -> Temperatures {
+    private static let cpuSensor = "PMU tdie"
+    private static let shown = [cpuSensor, "NAND", "gas gauge battery"]
+
+    /// `cpuOnly`: just the CPU dies, for the menu bar while the panel is closed.
+    func read(cpuOnly: Bool = false) -> Temperatures {
         guard let copyEvent, let getFloat else { return Temperatures() }
         var cpu: [Double] = [], ssd: [Double] = [], battery: [Double] = []
-        for (name, service) in sensors {
+        for (name, service) in sensors where !cpuOnly || name.hasPrefix(Self.cpuSensor) {
             guard let event = copyEvent(service, Self.temperatureEvent, 0, 0)?.takeRetainedValue() else { continue }
             let t = getFloat(event, Self.temperatureField)
             guard t > 0, t < 150 else { continue }    // disconnected sensors report 0 or garbage
-            if name.hasPrefix("PMU tdie") { cpu.append(t) }
+            if name.hasPrefix(Self.cpuSensor) { cpu.append(t) }
             else if name.hasPrefix("NAND") { ssd.append(t) }
             else if name.hasPrefix("gas gauge battery") { battery.append(t) }
         }

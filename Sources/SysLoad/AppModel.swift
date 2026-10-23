@@ -51,7 +51,11 @@ final class AppModel: ObservableObject {
 
     /// Details (processes, GPU, disk, interface, Ollama stats) are read only while the panel is open.
     var panelOpen = false {
-        didSet { if panelOpen && !oldValue { refreshDetails() } }
+        didSet {
+            guard panelOpen && !oldValue else { return }
+            temps = thermal.read()    // SSD and battery too, which the menu bar doesn't need
+            refreshDetails()
+        }
     }
 
     func start() {
@@ -65,7 +69,7 @@ final class AppModel: ObservableObject {
     func tick() {
         now = Date()
         cpu = sampler.cpu()
-        temps = thermal.read()
+        temps = thermal.read(cpuOnly: !panelOpen)
         memory = sampler.memory()
         (net, netTotals) = sampler.network()
         history.append(Sample(t: now, cpuUser: cpu.user, cpuSystem: cpu.system, cpuTemp: temps.cpuMax,

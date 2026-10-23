@@ -18,7 +18,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
-        popover.contentViewController = NSHostingController(rootView: PopoverView().environmentObject(model))
 
         if let button = item.button {
             button.target = self
@@ -26,9 +25,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             button.imagePosition = .imageOnly
         }
 
+        // A tick changes several properties at once: one redraw after all of them.
         model.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] in DispatchQueue.main.async { self?.render() } }
+            .debounce(for: .milliseconds(10), scheduler: DispatchQueue.main)
+            .sink { [weak self] in self?.render() }
             .store(in: &bag)
         render()
     }
@@ -39,14 +39,18 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             popover.performClose(nil)
         } else {
             model.panelOpen = true
+            popover.contentViewController = NSHostingController(rootView: PopoverView().environmentObject(model))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             NSApp.activate(ignoringOtherApps: true)
         }
     }
 
+    /// A closed panel's SwiftUI views would still redraw their charts on every tick and hold their GPU textures,
+    /// so they are built on open and dropped on close.
     func popoverDidClose(_ notification: Notification) {
         model.panelOpen = false
+        popover.contentViewController = nil
     }
 
     private func render() {
