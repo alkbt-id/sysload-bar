@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
     static let historyLength = 90                // 3 minutes at 2 s
     /// Ollama's processes are re-listed every 3rd tick.
     static let ollamaEvery = 3
+    /// The indicator stays filled this long after a model stops generating, so a short reply isn't missed.
+    static let ollamaHold: TimeInterval = 60
 
     @Published var cpu = CPULoad()
     @Published var memory = MemoryInfo()
@@ -29,7 +31,7 @@ final class AppModel: ObservableObject {
     @Published var history: [Sample] = []
     @Published var processes: [ProcGroup] = []
     @Published var ollama: OllamaStatus?         // nil: not running
-    @Published var ollamaBusy = false            // a model is generating
+    @Published var ollamaActiveAt: Date?         // last tick a model was generating
     @Published var now = Date()
     @Published var launchAtLogin = LoginItem.isEnabled {
         didSet { LoginItem.setEnabled(launchAtLogin) }
@@ -43,6 +45,7 @@ final class AppModel: ObservableObject {
     private let ollamaClient = Ollama()
     private let ollamaProcesses = OllamaProcesses()
     private var ollamaRunning = false
+    private var ollamaRecheck = false
     private var ticks = 0
     private var timer: Timer?
 
@@ -68,19 +71,23 @@ final class AppModel: ObservableObject {
         history.append(Sample(t: now, cpuUser: cpu.user, cpuSystem: cpu.system, cpuTemp: temps.cpuMax,
                               memory: memory.fraction, rx: net.rx, tx: net.tx))
         if history.count > Self.historyLength { history.removeFirst(history.count - Self.historyLength) }
+        if ollamaProcesses.cores() > 0.2 { ollamaActiveAt = now }
         if ticks % Self.ollamaEvery == 0 {
-            // With the panel closed the API is asked only when Ollama's processes change (a model loaded or unloaded)
-            // and once a minute: each request is a line in its log.
+            // With the panel closed the API is asked only when needed, since each request is a line in Ollama's log:
+            // when its processes change (a model loads or unloads) and once more after that, because a runner starts
+            // before its model shows in the API; while a model works; and once a minute.
             let changed = ollamaProcesses.rescan()
-            if !panelOpen, changed || ticks % 30 == 0 { refreshOllama(details: false) }
+            let working = ollamaActiveAt.map { now.timeIntervalSince($0) < AppModel.interval * Double(Self.ollamaEvery) } ?? false
+            if !panelOpen, changed || ollamaRecheck || working || ticks % 30 == 0 { refreshOllama(details: false) }
+            ollamaRecheck = changed
         }
-        ollamaBusy = ollamaProcesses.cores() > 0.2
         if panelOpen { refreshDetails() }
         ticks += 1
     }
 
     var ollamaState: OllamaState? {
-        ollama.map { $0.loaded.isEmpty ? .noModel : ollamaBusy ? .busy : .loaded }
+        let busy = ollamaActiveAt.map { now.timeIntervalSince($0) < Self.ollamaHold } ?? false
+        return ollama.map { $0.loaded.isEmpty ? .noModel : .loaded(memory: Double($0.memory) / Double(Ollama.gpuMemory), busy: busy) }
     }
 
     func refreshDetails() {

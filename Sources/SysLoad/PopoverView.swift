@@ -276,7 +276,8 @@ private struct OllamaSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Header(title: "Ollama", trailing: model.ollama.map { $0.version.isEmpty ? "" : "v\($0.version)" } ?? "не запущена")
+            Header(title: "Ollama", trailing: model.ollama.map(headerText) ?? "не запущена")
+                .help("Сколько памяти GPU занимают загруженные модели; от этого зависит цвет значка в строке меню")
             if let o = model.ollama {
                 if o.loaded.isEmpty {
                     Text("Ни одна модель не загружена в память").font(.callout).foregroundStyle(.secondary)
@@ -302,6 +303,13 @@ private struct OllamaSection: View {
             }
         }
     }
+}
+
+/// "4,6 ГБ из 37 ГБ · v0.40.8": the models' memory against what the GPU can hold.
+private func headerText(_ o: OllamaStatus) -> String {
+    [o.loaded.isEmpty ? "" : "\(Fmt.bytes(o.memory, binary: true)) из \(Fmt.bytes(Ollama.gpuMemory, binary: true))",
+     o.version.isEmpty ? "" : "v\(o.version)"]
+        .filter { !$0.isEmpty }.joined(separator: " · ")
 }
 
 private struct ModelRow: View {

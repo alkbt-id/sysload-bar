@@ -10,7 +10,21 @@ enum Palette {
         (1.0, (0.90, 0.22, 0.20)),
     ]
 
-    static func rgb(_ fraction: Double) -> (Double, Double, Double) {
+    // Even steps from green through yellow to red, for amounts where every step matters (Ollama's share of GPU memory).
+    private static let gradientStops: [(Double, (Double, Double, Double))] = [
+        (0.0, (0.20, 0.72, 0.33)),
+        (0.5, (0.96, 0.74, 0.10)),
+        (1.0, (0.90, 0.22, 0.20)),
+    ]
+
+    static func rgb(_ fraction: Double) -> (Double, Double, Double) { interpolate(fraction, stops) }
+
+    static func gradient(_ fraction: Double) -> NSColor {
+        let c = interpolate(fraction, gradientStops)
+        return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+    }
+
+    private static func interpolate(_ fraction: Double, _ stops: [(Double, (Double, Double, Double))]) -> (Double, Double, Double) {
         let f = min(max(fraction, 0), 1)
         for i in 1..<stops.count where f <= stops[i].0 {
             let (f0, a) = stops[i - 1], (f1, b) = stops[i]

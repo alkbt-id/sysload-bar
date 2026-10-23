@@ -53,17 +53,24 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         guard let button = item.button else { return }
         button.image = Self.image(cpu: model.cpu.total, temperature: model.temps.cpuMax, ollama: model.ollamaState)
         var tip = ["ЦП \(Fmt.percent(model.cpu.total)) · \(Fmt.degrees(model.temps.cpuMax))"]
-        if let state = model.ollamaState {
-            let names = (model.ollama?.loaded ?? []).map(\.name).joined(separator: ", ")
+        if let o = model.ollama, let state = model.ollamaState {
             let line = switch state {
             case .noModel: "Ollama: ни одна модель не загружена"
-            case .loaded: "Ollama: \(names)"
-            case .busy: "Ollama отвечает: \(names)"
+            case .loaded(_, let busy):
+                activity(busy: busy) + o.loaded.map(\.name).joined(separator: ", ")
+                    + " — \(Fmt.bytes(o.memory, binary: true)) из \(Fmt.bytes(Ollama.gpuMemory, binary: true)) памяти GPU"
             }
             tip.append(line)
         }
         tip.append("Нажмите, чтобы открыть панель")
         button.toolTip = tip.joined(separator: "\n")
+    }
+
+    /// "Ollama отвечает: ", or within the hold after a reply "Ollama, ответ 12 с назад: ".
+    private func activity(busy: Bool) -> String {
+        guard busy, let at = model.ollamaActiveAt else { return "Ollama: " }
+        let ago = model.now.timeIntervalSince(at)
+        return ago < AppModel.interval ? "Ollama отвечает: " : "Ollama, ответ \(Fmt.duration(ago)) назад: "
     }
 
     static func image(cpu: Double, temperature: Double?, ollama: OllamaState? = nil) -> NSImage {
@@ -97,15 +104,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         return img
     }
 
-    /// Dim: Ollama runs but no model is in memory; normal: a model is loaded; green: it is generating.
+    /// Dim: Ollama runs but no model is in memory. With models: green to red as they fill the GPU memory, filled while generating.
     private static func indicator(_ state: OllamaState) -> NSImage? {
-        let color: NSColor = switch state {
-        case .noModel: .tertiaryLabelColor
-        case .loaded: .labelColor
-        case .busy: Palette.nsColor(0)
+        let (color, symbol): (NSColor, String) = switch state {
+        case .noModel: (.tertiaryLabelColor, "brain")
+        case .loaded(let memory, let busy): (Palette.gradient(memory), busy ? "brain.fill" : "brain")
         }
         let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        return NSImage(systemSymbolName: "brain", accessibilityDescription: "Ollama")?.withSymbolConfiguration(config)
+        return NSImage(systemSymbolName: symbol, accessibilityDescription: "Ollama")?.withSymbolConfiguration(config)
     }
 }

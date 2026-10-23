@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Metal
 
 /// A model Ollama keeps in memory (`ollama ps`).
 struct OllamaModel: Identifiable {
@@ -24,7 +25,10 @@ struct OllamaActivity {
 }
 
 /// The menu bar indicator; nil (no indicator) when Ollama isn't running.
-enum OllamaState { case noModel, loaded, busy }
+enum OllamaState {
+    case noModel
+    case loaded(memory: Double, busy: Bool)     // memory: share of `Ollama.gpuMemory` the models take
+}
 
 struct OllamaStatus {
     var version = ""
@@ -32,12 +36,17 @@ struct OllamaStatus {
     var installed = 0
     var installedSize: UInt64 = 0   // on disk
     var activity: OllamaActivity?   // nil when the log isn't found
+    var memory: UInt64 { loaded.reduce(0) { $0 + $1.size } }
 }
 
 /// Ollama state from its HTTP API (models in memory, downloaded models) and its server log (requests, speed).
 actor Ollama {
     // OLLAMA_HOST isn't visible to a LaunchAgent anyway, so only the default address.
     private static let base = URL(string: "http://127.0.0.1:11434")!
+
+    /// What the GPU can hold; on a Mac Ollama treats it as VRAM (≈ 3/4 of RAM: 37 GiB of 48).
+    nonisolated static let gpuMemory = MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize
+        ?? ProcessInfo.processInfo.physicalMemory * 3 / 4
 
     nonisolated static let isInstalled = ["/opt/homebrew/bin/ollama", "/usr/local/bin/ollama", "/Applications/Ollama.app"]
         .contains { FileManager.default.fileExists(atPath: $0) }
@@ -106,27 +115,38 @@ actor Ollama {
 }
 
 /// Ollama's processes: the server and a runner per loaded model, found by path ("…/ollama", "…/ollama/llama-server",
-/// "Ollama.app/…"), so both the Homebrew service and the app work. Their CPU time shows when a model is generating:
-/// it grows by several seconds per second then, and stands still when idle, even with the model on the GPU.
+/// "Ollama.app/…"), so both the Homebrew service and the app work. The runners' CPU time shows when a model is
+/// generating: it grows by several seconds per second then, and stands still when idle, even with the model on the GPU.
 final class OllamaProcesses {
-    private var cpu: [pid_t: UInt64] = [:]      // CPU time so far, ns
+    private var pids: Set<pid_t> = []
+    private var cpu: [pid_t: UInt64] = [:]      // runners' CPU time so far, ns
     private var last: Date?
     private static let timebase: mach_timebase_info_data_t = {
         var t = mach_timebase_info_data_t()
         mach_timebase_info(&t)
         return t
     }()
+    private static let argmax: Int = {
+        var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
+        var v: Int32 = 0, size = MemoryLayout<Int32>.size
+        return sysctl(&mib, 2, &v, &size, nil, 0) == 0 ? Int(v) : 4096
+    }()
 
     /// Re-lists the processes; true when the set changed (a model loaded or unloaded, the server started or stopped).
     func rescan() -> Bool {
-        var pids = [pid_t](repeating: 0, count: Int(proc_listallpids(nil, 0)) + 64)
-        let count = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+        var all = [pid_t](repeating: 0, count: Int(proc_listallpids(nil, 0)) + 64)
+        let count = Int(proc_listallpids(&all, Int32(all.count * MemoryLayout<pid_t>.size)))
         var path = [CChar](repeating: 0, count: 4096)     // PROC_PIDPATHINFO_MAXSIZE
-        let found = Set(pids.prefix(max(0, count)).filter { pid in
+        let found = Set(all.prefix(max(0, count)).filter { pid in
             pid > 0 && proc_pidpath(pid, &path, UInt32(path.count)) > 0 && String(cString: path).lowercased().contains("ollama")
         })
-        guard found != Set(cpu.keys) else { return false }
-        cpu = Dictionary(uniqueKeysWithValues: found.map { ($0, cpu[$0] ?? Self.cpuTime($0) ?? 0) })
+        guard found != pids else { return false }
+        pids = found
+        // The server and CLI commands ("ollama pull") also use CPU, downloading and hashing models; answering happens
+        // in the runners the server starts.
+        let servers = Set(found.filter { Self.command($0) == "serve" })
+        let runners = found.filter { servers.contains(Self.parent($0)) }
+        cpu = Dictionary(uniqueKeysWithValues: runners.map { ($0, cpu[$0] ?? Self.cpuTime($0) ?? 0) })
         return true
     }
 
@@ -142,6 +162,23 @@ final class OllamaProcesses {
         }
         guard let last, now > last else { return 0 }
         return Double(used) / 1e9 / now.timeIntervalSince(last)
+    }
+
+    /// argv[1], e.g. "serve". KERN_PROCARGS2 is argc, then the executable path, NUL padding, argv and the environment.
+    private static func command(_ pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var buf = [UInt8](repeating: 0, count: argmax)
+        var size = buf.count
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > 4,
+              buf.withUnsafeBytes({ $0.load(as: Int32.self) }) > 1 else { return nil }
+        let words = buf[4..<size].split(separator: 0)      // path, argv[0], argv[1], …
+        return words.count > 2 ? String(decoding: words[words.startIndex + 2], as: UTF8.self) : nil
+    }
+
+    private static func parent(_ pid: pid_t) -> pid_t {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size ? pid_t(info.pbi_ppid) : 0
     }
 
     private static func cpuTime(_ pid: pid_t) -> UInt64? {
