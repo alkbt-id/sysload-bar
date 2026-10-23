@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 
 struct PopoverView: View {
     @EnvironmentObject var model: AppModel
+    /// Room for every section; on a smaller screen the panel is shorter and scrolls.
+    static let fullHeight: CGFloat = 1100
+    var height = min(fullHeight, (NSScreen.main?.visibleFrame.height ?? fullHeight) - 20)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -14,6 +17,10 @@ struct PopoverView: View {
                     Divider()
                     CPUSection()
                     Divider()
+                    if model.ollama != nil || Ollama.isInstalled {
+                        OllamaSection()
+                        Divider()
+                    }
                     MemorySection()
                     Divider()
                     NetworkSection()
@@ -25,7 +32,7 @@ struct PopoverView: View {
             Divider()
             Footer().padding(.horizontal, 16).padding(.vertical, 10)
         }
-        .frame(width: 380, height: 900)
+        .frame(width: 380, height: height)
     }
 
     private var rings: some View {
@@ -259,6 +266,72 @@ private struct NetworkSection: View {
                 KV(key: "↑ С загрузки", value: Fmt.bytes(model.netTotals.tx))
             }
         }
+    }
+}
+
+// MARK: - Ollama
+
+private struct OllamaSection: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Header(title: "Ollama", trailing: model.ollama.map { $0.version.isEmpty ? "" : "v\($0.version)" } ?? "не запущена")
+            if let o = model.ollama {
+                if o.loaded.isEmpty {
+                    Text("Ни одна модель не загружена в память").font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(o.loaded) { ModelRow(m: $0, now: model.now) }
+                let disk = KV(key: "На диске", value: "\(o.installed) · \(Fmt.bytes(o.installedSize))")
+                    .help("Скачанных моделей: \(o.installed), занимают \(Fmt.bytes(o.installedSize))")
+                if let a = o.activity {
+                    Columns {
+                        KV(key: "Запросов за 5 мин", value: "\(a.requests)")
+                        KV(key: "Последний", value: a.lastRequest.map { Fmt.duration(model.now.timeIntervalSince($0)) + " назад" } ?? "—")
+                        KV(key: "Время ответа", value: a.latency.map(Fmt.seconds) ?? "—")
+                            .help("Среднее за 5 минут; у потоковых ответов — вместе со всей генерацией")
+                    } right: {
+                        KV(key: "Генерация", value: Fmt.speed(a.generation))
+                        KV(key: "Промпт", value: Fmt.speed(a.prompt))
+                            .help("Скорость чтения промпта")
+                        disk
+                    }
+                } else {
+                    disk
+                }
+            }
+        }
+    }
+}
+
+private struct ModelRow: View {
+    let m: OllamaModel
+    let now: Date
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(m.name).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(Fmt.bytes(m.size, binary: true)).monospacedDigit()
+            }
+            .font(.callout)
+            HStack(spacing: 8) {
+                Text(details).lineLimit(1)
+                Spacer(minLength: 8)
+                Text(Fmt.unload(m.expiresAt, now: now)).monospacedDigit()
+                    .help("Ollama выгрузит модель из памяти, если до этого не придёт запрос")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var details: String {
+        // Like the PROCESSOR column of `ollama ps`.
+        let processor = m.gpuShare > 0.995 ? "GPU" : m.gpuShare < 0.005 ? "ЦП" : "GPU \(Fmt.percent(m.gpuShare))"
+        return [m.parameters, m.quantization, m.context.map { "контекст \(Fmt.tokens($0))" }, processor]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

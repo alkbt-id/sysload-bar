@@ -20,9 +20,9 @@ enum Snapshot {
 
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             let suffix = appearance == .aqua ? "light" : "dark"
-            let host = NSHostingView(rootView: PopoverView().environmentObject(model)
+            let host = NSHostingView(rootView: PopoverView(height: PopoverView.fullHeight).environmentObject(model)
                 .background(Color(nsColor: .windowBackgroundColor)))
-            host.frame = NSRect(x: 0, y: 0, width: 380, height: 900)
+            host.frame = NSRect(x: 0, y: 0, width: 380, height: PopoverView.fullHeight)
             host.appearance = NSAppearance(named: appearance)
             let win = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
             win.appearance = NSAppearance(named: appearance)
@@ -31,7 +31,7 @@ enum Snapshot {
             try? await Task.sleep(nanoseconds: 500_000_000)
             save(host, to: dir.appendingPathComponent("panel-\(suffix).png"))
 
-            let img = StatusItemController.image(cpu: model.cpu.total, temperature: model.temps.cpuMax)
+            let img = StatusItemController.image(cpu: model.cpu.total, temperature: model.temps.cpuMax, ollama: model.ollamaState)
             let bar = NSView(frame: NSRect(x: 0, y: 0, width: img.size.width + 24, height: 24))
             bar.appearance = NSAppearance(named: appearance)
             bar.wantsLayer = true
@@ -71,6 +71,15 @@ enum Snapshot {
         m.temps = Temperatures(cpuMax: 59, cpuAvg: 54, ssd: 33, battery: 30)
         m.disk = DiskInfo(total: 1_000_000_000_000, free: 550_000_000_000)
         m.interface = ("en0", "192.168.1.24")
+        m.now = now
+        m.ollama = OllamaStatus(
+            version: "0.40.8",
+            loaded: [OllamaModel(name: "qwen2.5-coder:7b", size: 4_930_000_000, sizeVRAM: 4_930_000_000, parameters: "7.6B",
+                                 quantization: "Q4_K_M", context: 8192, expiresAt: now.addingTimeInterval(26 * 60 + 30)),
+                     OllamaModel(name: "nomic-embed-text:latest", size: 580_000_000, sizeVRAM: 580_000_000, parameters: "137M",
+                                 quantization: "F16", context: 2048, expiresAt: now.addingTimeInterval(3 * 60 + 30))],
+            installed: 6, installedSize: 31_400_000_000,
+            activity: OllamaActivity(requests: 42, lastRequest: now.addingTimeInterval(-3), latency: 0.41, generation: 71.6, prompt: 712))
         m.processes = [
             ProcGroup(id: "/Applications/Safari.app", name: "Safari", cpu: 38.2, memory: 3 * gb, count: 9),
             ProcGroup(id: "/System/Applications/Utilities/Terminal.app", name: "Terminal", cpu: 12.5, memory: gb / 3, count: 2),

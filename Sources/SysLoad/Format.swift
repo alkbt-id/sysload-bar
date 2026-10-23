@@ -74,12 +74,40 @@ enum Fmt {
         return i == 0 ? "\(b) Б" : "\(number(v)) \(units[i])"
     }
 
-    static func uptime(since boot: Date?, now: Date) -> String {
-        guard let boot else { return "—" }
-        let s = max(0, Int(now.timeIntervalSince(boot)))
+    /// "45 с", "26 мин", "2 ч 5 мин", "3 д 4 ч".
+    static func duration(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
         let d = s / 86400, h = (s % 86400) / 3600, m = (s % 3600) / 60
         if d > 0 { return "\(d) д \(h) ч" }
         if h > 0 { return "\(h) ч \(m) мин" }
-        return "\(m) мин"
+        if m > 0 { return "\(m) мин" }
+        return "\(s) с"
+    }
+
+    static func uptime(since boot: Date?, now: Date) -> String {
+        guard let boot else { return "—" }
+        return duration(now.timeIntervalSince(boot))
+    }
+
+    /// Response time: "390 мс", "1,2 с".
+    static func seconds(_ s: Double) -> String {
+        s < 0.9995 ? "\(Int((s * 1000).rounded())) мс" : "\(number(s)) с"
+    }
+
+    /// Context size in tokens: 8192 → "8K".
+    static func tokens(_ n: Int) -> String {
+        n >= 1024 ? "\(Int((Double(n) / 1024).rounded()))K" : "\(n)"
+    }
+
+    static func speed(_ tokensPerSecond: Double?) -> String {
+        tokensPerSecond.map { "\(number($0)) ток/с" } ?? "—"
+    }
+
+    /// Ollama's keep_alive countdown: "ещё 26 мин". A negative keep_alive means "never" and comes as a date centuries ahead.
+    static func unload(_ at: Date?, now: Date) -> String {
+        guard let at else { return "" }
+        let left = at.timeIntervalSince(now)
+        if left > 365 * 86400 { return "без выгрузки" }
+        return left > 0 ? "ещё \(duration(left))" : "выгружается"
     }
 }
