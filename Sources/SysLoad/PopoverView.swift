@@ -21,6 +21,10 @@ struct PopoverView: View {
                         OllamaSection()
                         Divider()
                     }
+                    if !model.torch.isEmpty {
+                        TorchSection()
+                        Divider()
+                    }
                     MemorySection()
                     Divider()
                     NetworkSection()
@@ -340,6 +344,54 @@ private struct ModelRow: View {
         let processor = m.gpuShare > 0.995 ? "GPU" : m.gpuShare < 0.005 ? "ЦП" : "GPU \(Fmt.percent(m.gpuShare))"
         return [m.parameters, m.quantization, m.context.map { "контекст \(Fmt.tokens($0))" }, processor]
             .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+// MARK: - PyTorch
+
+private struct TorchSection: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        let memory = model.torch.reduce(0) { $0 + $1.memory }
+        VStack(alignment: .leading, spacing: 8) {
+            Header(title: "PyTorch", trailing: "\(Fmt.bytes(memory, binary: true)) из \(Fmt.bytes(Ollama.gpuMemory, binary: true))")
+                .help("Память процессов с PyTorch (на Mac у GPU и ЦП она общая) против того, что может взять GPU; от этого зависит цвет значка в строке меню")
+            ForEach(model.torch) { TorchRow(p: $0) }
+            if let hf = model.hfCache {
+                KV(key: "Hugging Face на диске", value: "\(hf.count) · \(Fmt.bytes(hf.size))")
+                    .help("Скачанных моделей в ~/.cache/huggingface/hub: \(hf.count), занимают \(Fmt.bytes(hf.size))")
+            }
+        }
+    }
+}
+
+private struct TorchRow: View {
+    let p: TorchProcess
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(p.project).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(Fmt.bytes(p.memory, binary: true)).monospacedDigit()
+            }
+            .font(.callout)
+            HStack(spacing: 8) {
+                Text(p.kind).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(load).monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .help("PID \(p.pid)")
+    }
+
+    /// "GPU 62% · ЦП 1,1 ядра", or "простаивает".
+    private var load: String {
+        guard p.busy else { return "простаивает" }
+        return "GPU \(Fmt.percent(p.gpu)) · ЦП \(Fmt.cores(p.cores))"
     }
 }
 

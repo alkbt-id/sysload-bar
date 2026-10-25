@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 import Metal
 
 /// A model Ollama keeps in memory (`ollama ps`).
@@ -121,32 +120,18 @@ final class OllamaProcesses {
     private var pids: Set<pid_t> = []
     private var cpu: [pid_t: UInt64] = [:]      // runners' CPU time so far, ns
     private var last: Date?
-    private static let timebase: mach_timebase_info_data_t = {
-        var t = mach_timebase_info_data_t()
-        mach_timebase_info(&t)
-        return t
-    }()
-    private static let argmax: Int = {
-        var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
-        var v: Int32 = 0, size = MemoryLayout<Int32>.size
-        return sysctl(&mib, 2, &v, &size, nil, 0) == 0 ? Int(v) : 4096
-    }()
 
-    /// Re-lists the processes; true when the set changed (a model loaded or unloaded, the server started or stopped).
-    func rescan() -> Bool {
-        var all = [pid_t](repeating: 0, count: Int(proc_listallpids(nil, 0)) + 64)
-        let count = Int(proc_listallpids(&all, Int32(all.count * MemoryLayout<pid_t>.size)))
-        var path = [CChar](repeating: 0, count: 4096)     // PROC_PIDPATHINFO_MAXSIZE
-        let found = Set(all.prefix(max(0, count)).filter { pid in
-            pid > 0 && proc_pidpath(pid, &path, UInt32(path.count)) > 0 && String(cString: path).lowercased().contains("ollama")
-        })
+    /// Picks Ollama's out of all processes; true when the set changed (a model loaded or unloaded, the server
+    /// started or stopped).
+    func rescan(_ all: [(pid: pid_t, path: String)]) -> Bool {
+        let found = Set(all.filter { $0.path.lowercased().contains("ollama") }.map(\.pid))
         guard found != pids else { return false }
         pids = found
         // The server and CLI commands ("ollama pull") also use CPU, downloading and hashing models; answering happens
         // in the runners the server starts.
-        let servers = Set(found.filter { Self.command($0) == "serve" })
-        let runners = found.filter { servers.contains(Self.parent($0)) }
-        cpu = Dictionary(uniqueKeysWithValues: runners.map { ($0, cpu[$0] ?? Self.cpuTime($0) ?? 0) })
+        let servers = Set(found.filter { ProcInfo.arguments($0).dropFirst().first == "serve" })
+        let runners = found.filter { servers.contains(ProcInfo.parent($0)) }
+        cpu = Dictionary(uniqueKeysWithValues: runners.map { ($0, cpu[$0] ?? ProcInfo.usage($0)?.cpu ?? 0) })
         return true
     }
 
@@ -156,38 +141,12 @@ final class OllamaProcesses {
         defer { last = now }
         var used: UInt64 = 0
         for (pid, before) in cpu {
-            guard let t = Self.cpuTime(pid) else { continue }    // exited; dropped on the next rescan
+            guard let t = ProcInfo.usage(pid)?.cpu else { continue }    // exited; dropped on the next rescan
             used += t > before ? t - before : 0
             cpu[pid] = t
         }
         guard let last, now > last else { return 0 }
         return Double(used) / 1e9 / now.timeIntervalSince(last)
-    }
-
-    /// argv[1], e.g. "serve". KERN_PROCARGS2 is argc, then the executable path, NUL padding, argv and the environment.
-    private static func command(_ pid: pid_t) -> String? {
-        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-        var buf = [UInt8](repeating: 0, count: argmax)
-        var size = buf.count
-        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > 4,
-              buf.withUnsafeBytes({ $0.load(as: Int32.self) }) > 1 else { return nil }
-        let words = buf[4..<size].split(separator: 0)      // path, argv[0], argv[1], …
-        return words.count > 2 ? String(decoding: words[words.startIndex + 2], as: UTF8.self) : nil
-    }
-
-    private static func parent(_ pid: pid_t) -> pid_t {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
-        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size ? pid_t(info.pbi_ppid) : 0
-    }
-
-    private static func cpuTime(_ pid: pid_t) -> UInt64? {
-        var u = rusage_info_v0()
-        let r = withUnsafeMutablePointer(to: &u) {
-            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V0, $0) }
-        }
-        // Mach time units, which on Apple Silicon are not nanoseconds.
-        return r == 0 ? (u.ri_user_time + u.ri_system_time) * UInt64(timebase.numer) / UInt64(timebase.denom) : nil
     }
 }
 

@@ -31,7 +31,7 @@ enum Snapshot {
             try? await Task.sleep(nanoseconds: 500_000_000)
             save(host, to: dir.appendingPathComponent("panel-\(suffix).png"))
 
-            let img = StatusItemController.image(cpu: model.cpu.total, temperature: model.temps.cpuMax, ollama: model.ollamaState)
+            let img = StatusItemController.image(cpu: model.cpu.total, temperature: model.temps.cpuMax, ollama: model.ollamaState, torch: model.torchState)
             let bar = NSView(frame: NSRect(x: 0, y: 0, width: img.size.width + 24, height: 24))
             bar.appearance = NSAppearance(named: appearance)
             bar.wantsLayer = true
@@ -80,6 +80,9 @@ enum Snapshot {
                                  quantization: "F16", context: 2048, expiresAt: now.addingTimeInterval(3 * 60 + 30))],
             installed: 6, installedSize: 31_400_000_000,
             activity: OllamaActivity(requests: 42, lastRequest: now.addingTimeInterval(-3), latency: 0.41, generation: 71.6, prompt: 712))
+        m.torch = [TorchProcess(pid: 1, project: "05a-forward-pass", kind: "Jupyter", memory: 7_400_000_000, gpu: 0.62, cores: 1.1)]
+        m.torchActiveAt = now
+        m.hfCache = (8, 15_300_000_000)
         m.processes = [
             ProcGroup(id: "/Applications/Safari.app", name: "Safari", cpu: 38.2, memory: 3 * gb, count: 9),
             ProcGroup(id: "/System/Applications/Utilities/Terminal.app", name: "Terminal", cpu: 12.5, memory: gb / 3, count: 2),

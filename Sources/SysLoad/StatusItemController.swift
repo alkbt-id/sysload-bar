@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Menu bar item: "CPU 15%" over "TMP 50°" (hottest CPU die sensor) in two small lines, with an Ollama indicator
-/// to the left while it runs. Everything else lives in the panel.
+/// Menu bar item: "CPU 15%" over "TMP 50°" (hottest CPU die sensor) in two small lines, with Ollama and PyTorch
+/// indicators to the left while they run. Everything else lives in the panel.
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let model: AppModel
@@ -55,7 +55,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private func render() {
         guard let button = item.button else { return }
-        button.image = Self.image(cpu: model.cpu.total, temperature: model.temps.cpuMax, ollama: model.ollamaState)
+        button.image = Self.image(cpu: model.cpu.total, temperature: model.temps.cpuMax,
+                                  ollama: model.ollamaState, torch: model.torchState)
         var tip = ["ЦП \(Fmt.percent(model.cpu.total)) · \(Fmt.degrees(model.temps.cpuMax))"]
         if let o = model.ollama, let state = model.ollamaState {
             let line = switch state {
@@ -65,6 +66,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                     + " — \(Fmt.bytes(o.memory, binary: true)) из \(Fmt.bytes(Ollama.gpuMemory, binary: true)) памяти GPU"
             }
             tip.append(line)
+        }
+        if let state = model.torchState {
+            let memory = model.torch.reduce(0) { $0 + $1.memory }
+            tip.append(torchActivity(busy: state.busy) + model.torch.map(\.project).joined(separator: ", ")
+                + " — \(Fmt.bytes(memory, binary: true)) из \(Fmt.bytes(Ollama.gpuMemory, binary: true)) памяти GPU")
         }
         tip.append("Нажмите, чтобы открыть панель")
         button.toolTip = tip.joined(separator: "\n")
@@ -77,7 +83,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         return ago < AppModel.interval ? "Ollama отвечает: " : "Ollama, ответ \(Fmt.duration(ago)) назад: "
     }
 
-    static func image(cpu: Double, temperature: Double?, ollama: OllamaState? = nil) -> NSImage {
+    /// "PyTorch считает: ", or within the hold "PyTorch, считал 12 с назад: ".
+    private func torchActivity(busy: Bool) -> String {
+        guard busy, let at = model.torchActiveAt else { return "PyTorch: " }
+        let ago = model.now.timeIntervalSince(at)
+        return ago < AppModel.interval ? "PyTorch считает: " : "PyTorch, считал \(Fmt.duration(ago)) назад: "
+    }
+
+    static func image(cpu: Double, temperature: Double?, ollama: OllamaState? = nil, torch: TorchState? = nil) -> NSImage {
         let labelFont = NSFont.systemFont(ofSize: 8, weight: .semibold)
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold)
         // (label, text, load for color, baseline)
@@ -89,14 +102,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let labelWidth = ceil(labels.map { $0.size().width }.max() ?? 0)
         // Fixed value width ("100%"), right-aligned: the item doesn't jitter as numbers change.
         let valueWidth = ceil(("100%" as NSString).size(withAttributes: [.font: valueFont]).width)
-        let glyph = ollama.flatMap(indicator)
-        let x0 = glyph.map { ceil($0.size.width) + 4 } ?? 0
+        let glyphs = [ollama.flatMap(indicator), torch.flatMap(indicator)].compactMap { $0 }
+        let x0 = glyphs.reduce(0) { $0 + ceil($1.size.width) + 4 }
         let width = x0 + labelWidth + 3 + valueWidth
 
         // draw(at:) takes the line's bottom-left corner; the baseline sits `descender` above it.
         let img = NSImage(size: NSSize(width: width, height: 22), flipped: false) { _ in
-            if let glyph {
-                glyph.draw(in: NSRect(origin: NSPoint(x: 0, y: (22 - glyph.size.height) / 2), size: glyph.size))
+            var x: CGFloat = 0
+            for glyph in glyphs {
+                glyph.draw(in: NSRect(origin: NSPoint(x: x, y: (22 - glyph.size.height) / 2), size: glyph.size))
+                x += ceil(glyph.size.width) + 4
             }
             for (i, row) in rows.enumerated() {
                 labels[i].draw(at: NSPoint(x: x0, y: row.3 + labelFont.descender))
@@ -110,12 +125,20 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     /// Dim: Ollama runs but no model is in memory. With models: green to red as they fill the GPU memory, filled while generating.
     private static func indicator(_ state: OllamaState) -> NSImage? {
-        let (color, symbol): (NSColor, String) = switch state {
-        case .noModel: (.tertiaryLabelColor, "brain")
-        case .loaded(let memory, let busy): (Palette.gradient(memory), busy ? "brain.fill" : "brain")
+        switch state {
+        case .noModel: symbol("brain", color: .tertiaryLabelColor, name: "Ollama")
+        case .loaded(let memory, let busy): symbol(busy ? "brain.fill" : "brain", color: Palette.gradient(memory), name: "Ollama")
         }
+    }
+
+    /// A flame, like PyTorch's logo: green to red as its processes fill the GPU memory, filled while they compute.
+    private static func indicator(_ state: TorchState) -> NSImage? {
+        symbol(state.busy ? "flame.fill" : "flame", color: Palette.gradient(state.memory), name: "PyTorch")
+    }
+
+    private static func symbol(_ symbol: String, color: NSColor, name: String) -> NSImage? {
         let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        return NSImage(systemSymbolName: symbol, accessibilityDescription: "Ollama")?.withSymbolConfiguration(config)
+        return NSImage(systemSymbolName: symbol, accessibilityDescription: name)?.withSymbolConfiguration(config)
     }
 }

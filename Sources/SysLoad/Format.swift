@@ -113,6 +113,14 @@ enum Fmt {
         n >= 1024 ? "\(Int((Double(n) / 1024).rounded()))K" : "\(n)"
     }
 
+    /// Busy CPU cores: "0,4 ядра", "12 ядер". Below 10 there's always a fraction, which takes "ядра".
+    static func cores(_ n: Double) -> String {
+        guard n >= 9.95 else { return "\(number(n)) ядра" }
+        let i = Int(n.rounded())
+        let word = (11...14).contains(i % 100) ? "ядер" : i % 10 == 1 ? "ядро" : (2...4).contains(i % 10) ? "ядра" : "ядер"
+        return "\(i) \(word)"
+    }
+
     static func speed(_ tokensPerSecond: Double?) -> String {
         tokensPerSecond.map { "\(number($0)) ток/с" } ?? "—"
     }

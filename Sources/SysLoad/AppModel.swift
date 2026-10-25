@@ -14,9 +14,9 @@ final class AppModel: ObservableObject {
 
     static let interval: TimeInterval = 2
     static let historyLength = 90                // 3 minutes at 2 s
-    /// Ollama's processes are re-listed every 3rd tick.
+    /// Ollama's and PyTorch's processes are re-listed every 3rd tick.
     static let ollamaEvery = 3
-    /// The indicator stays filled this long after a model stops generating, so a short reply isn't missed.
+    /// An indicator stays filled this long after a model stops generating, so a short reply isn't missed.
     static let ollamaHold: TimeInterval = 60
 
     @Published var cpu = CPULoad()
@@ -32,6 +32,9 @@ final class AppModel: ObservableObject {
     @Published var processes: [ProcGroup] = []
     @Published var ollama: OllamaStatus?         // nil: not running
     @Published var ollamaActiveAt: Date?         // last tick a model was generating
+    @Published var torch: [TorchProcess] = []
+    @Published var torchActiveAt: Date?          // last tick a PyTorch process was computing
+    @Published var hfCache: (count: Int, size: UInt64)?
     @Published var now = Date()
     @Published var launchAtLogin = LoginItem.isEnabled {
         didSet { LoginItem.setEnabled(launchAtLogin) }
@@ -44,6 +47,8 @@ final class AppModel: ObservableObject {
     private var psRunning = false
     private let ollamaClient = Ollama()
     private let ollamaProcesses = OllamaProcesses()
+    private let torchProcesses = TorchProcesses()
+    private var hfCacheAt: Date?
     private var ollamaRunning = false
     private var ollamaRecheck = false
     private var ticks = 0
@@ -80,11 +85,15 @@ final class AppModel: ObservableObject {
             // With the panel closed the API is asked only when needed, since each request is a line in Ollama's log:
             // when its processes change (a model loads or unloads) and once more after that, because a runner starts
             // before its model shows in the API; while a model works; and once a minute.
-            let changed = ollamaProcesses.rescan()
+            let all = ProcInfo.all()
+            torchProcesses.rescan(all)
+            let changed = ollamaProcesses.rescan(all)
             let working = ollamaActiveAt.map { now.timeIntervalSince($0) < AppModel.interval * Double(Self.ollamaEvery) } ?? false
             if !panelOpen, changed || ollamaRecheck || working || ticks % 30 == 0 { refreshOllama(details: false) }
             ollamaRecheck = changed
         }
+        torch = torchProcesses.sample()
+        if torch.contains(where: \.busy) { torchActiveAt = now }
         if panelOpen { refreshDetails() }
         ticks += 1
     }
@@ -94,12 +103,22 @@ final class AppModel: ObservableObject {
         return ollama.map { $0.loaded.isEmpty ? .noModel : .loaded(memory: Double($0.memory) / Double(Ollama.gpuMemory), busy: busy) }
     }
 
+    var torchState: TorchState? {
+        guard !torch.isEmpty else { return nil }
+        return TorchState(memory: Double(torch.reduce(0) { $0 + $1.memory }) / Double(Ollama.gpuMemory),
+                          busy: torchActiveAt.map { now.timeIntervalSince($0) < Self.ollamaHold } ?? false)
+    }
+
     func refreshDetails() {
         load = Sampler.loadAverage()
         gpu = Sampler.gpu()
         disk = Sampler.disk()
         interface = Sampler.primaryInterface()
         refreshOllama(details: true)
+        if hfCacheAt.map({ now.timeIntervalSince($0) > 30 }) ?? true {
+            hfCache = HFCache.models()
+            hfCacheAt = now
+        }
         guard !psRunning else { return }
         psRunning = true
         psQueue.async {
