@@ -55,6 +55,7 @@ final class Sampler {
     private let host = mach_host_self()
     private var lastTicks: [UInt32]?
     private var lastNet: (counters: NetCounters, at: Date)?
+    private var lastGPU: (times: [pid_t: UInt64], at: Date)?
 
     // MARK: CPU
 
@@ -190,18 +191,57 @@ final class Sampler {
 
     // MARK: GPU
 
-    /// Utilization from the IOAccelerator's PerformanceStatistics (works on Apple Silicon and most Intel GPUs).
-    static func gpu() -> GPUInfo? {
+    /// Share of the last interval the GPU worked. Its "Device Utilization %" is a momentary value that jumps to 60–90%
+    /// on a nearly idle GPU, so it is only the fallback for GPUs whose clients don't report their time.
+    func gpu() -> GPUInfo? {
+        let now = Date()
+        let times = Self.gpuTimes()
+        defer { lastGPU = (times, now) }
+        guard var info = Self.gpuStatistics() else { return nil }
+        guard let prev = lastGPU, !times.isEmpty else { return info }
+        // A client that closed takes its time with it; that must not count as a wrap.
+        let busy = times.reduce(0.0) { $0 + Double($1.value - min($1.value, prev.times[$1.key] ?? $1.value)) }
+        info.utilization = min(1, busy / (now.timeIntervalSince(prev.at) * 1e9))
+        return info
+    }
+
+    /// GPU time per process, ns: every Metal client of the GPU is an IORegistry entry under it with the creator's pid
+    /// and its accumulated GPU time (what Activity Monitor's "GPU Time" column shows).
+    static func gpuTimes() -> [pid_t: UInt64] {
+        var result: [pid_t: UInt64] = [:]
+        var gpus: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &gpus) == KERN_SUCCESS else { return [:] }
+        defer { IOObjectRelease(gpus) }
+        while case let gpu = IOIteratorNext(gpus), gpu != 0 {
+            defer { IOObjectRelease(gpu) }
+            var clients: io_iterator_t = 0
+            guard IORegistryEntryGetChildIterator(gpu, kIOServicePlane, &clients) == KERN_SUCCESS else { continue }
+            defer { IOObjectRelease(clients) }
+            while case let client = IOIteratorNext(clients), client != 0 {
+                defer { IOObjectRelease(client) }
+                // "pid 33620, python3.14"
+                guard let creator = IORegistryEntryCreateCFProperty(client, "IOUserClientCreator" as CFString, kCFAllocatorDefault, 0)?
+                        .takeRetainedValue() as? String,
+                      creator.hasPrefix("pid "), let pid = pid_t(creator.dropFirst(4).prefix { $0.isNumber }),
+                      let usage = IORegistryEntryCreateCFProperty(client, "AppUsage" as CFString, kCFAllocatorDefault, 0)?
+                        .takeRetainedValue() as? [[String: Any]] else { continue }
+                result[pid, default: 0] += usage.reduce(0) { $0 + (($1["accumulatedGPUTime"] as? NSNumber)?.uint64Value ?? 0) }
+            }
+        }
+        return result
+    }
+
+    /// The IOAccelerator's PerformanceStatistics (works on Apple Silicon and most Intel GPUs).
+    private static func gpuStatistics() -> GPUInfo? {
         var iter: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &iter) == KERN_SUCCESS else { return nil }
         defer { IOObjectRelease(iter) }
         var best: GPUInfo?
         while case let svc = IOIteratorNext(iter), svc != 0 {
             defer { IOObjectRelease(svc) }
-            var props: Unmanaged<CFMutableDictionary>?
-            guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-                  let dict = props?.takeRetainedValue() as? [String: Any],
-                  let perf = dict["PerformanceStatistics"] as? [String: Any],
+            // One property: all of the entry's are 50 times slower to read, and this runs on every tick.
+            guard let perf = IORegistryEntryCreateCFProperty(svc, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?
+                    .takeRetainedValue() as? [String: Any],
                   let util = (perf["Device Utilization %"] as? NSNumber)?.doubleValue else { continue }
             let info = GPUInfo(utilization: min(1, util / 100),
                                memoryUsed: (perf["In use system memory"] as? NSNumber)?.uint64Value ?? 0,

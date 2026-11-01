@@ -31,7 +31,8 @@ enum Snapshot {
             try? await Task.sleep(nanoseconds: 500_000_000)
             save(host, to: dir.appendingPathComponent("panel-\(suffix).png"))
 
-            let img = StatusItemController.image(cpu: model.cpu.total, temperature: model.temps.cpuMax, ollama: model.ollamaState, torch: model.torchState)
+            let img = StatusItemController.image(cpu: model.cpu.total, gpu: model.gpu?.utilization, power: model.power,
+                                                 temperature: model.temps.cpuMax, ollama: model.ollamaState, torch: model.torchState)
             let bar = NSView(frame: NSRect(x: 0, y: 0, width: img.size.width + 24, height: 24))
             bar.appearance = NSAppearance(named: appearance)
             bar.wantsLayer = true
@@ -69,6 +70,7 @@ enum Snapshot {
         m.load = [2.68, 2.97, 3.67]
         m.gpu = GPUInfo(utilization: 0.24, memoryUsed: 1_810_000_000, memoryAllocated: 4_590_000_000)
         m.temps = Temperatures(cpuMax: 59, cpuAvg: 54, ssd: 33, battery: 30)
+        m.power = 23
         m.disk = DiskInfo(total: 1_000_000_000_000, free: 550_000_000_000)
         m.interface = ("en0", "192.168.1.24")
         m.now = now

@@ -65,6 +65,12 @@ enum Fmt {
     /// Temperature as a 0...1 load for coloring: yellow from ~80°, red near 100° (Apple Silicon throttles ~105°).
     static func heat(_ t: Double?) -> Double { (t ?? 0) / 100 }
 
+    /// "15 Вт", or "15W" in the menu bar, whose labels are Latin too.
+    static func watts(_ w: Double?, unit: String = " Вт") -> String { w.map { "\(Int($0.rounded()))\(unit)" } ?? "—" }
+
+    /// Power as a 0...1 load for coloring: yellow from ~80 W, red near 100 W, which only a Max or Ultra chip reaches.
+    static func powerLoad(_ w: Double?) -> Double { (w ?? 0) / 100 }
+
     /// "1,2", "12", "123": one decimal only below 10.
     private static func number(_ v: Double) -> String {
         v < 9.95 ? String(format: "%.1f", v).replacingOccurrences(of: ".", with: ",") : String(Int(v.rounded()))

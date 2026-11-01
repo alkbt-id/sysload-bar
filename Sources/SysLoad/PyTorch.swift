@@ -64,7 +64,7 @@ final class TorchProcesses {
         let now = Date()
         defer { last = now }
         let elapsed = last.map { now.timeIntervalSince($0) * 1e9 } ?? 0
-        let gpu = tracked.isEmpty ? [:] : Self.gpuTimes()
+        let gpu = tracked.isEmpty ? [:] : Sampler.gpuTimes()
         return tracked.map { top, t in
             var p = TorchProcess(pid: top, project: t.project, kind: t.kind, memory: 0, gpu: 0, cores: 0)
             for pid in t.members {
@@ -82,32 +82,6 @@ final class TorchProcesses {
             return p
         }
         .sorted { $0.memory > $1.memory }
-    }
-
-    /// GPU time per process, ns: every Metal client of the GPU is an IORegistry entry under it with the creator's pid
-    /// and its accumulated GPU time (what Activity Monitor's "GPU Time" column shows).
-    private static func gpuTimes() -> [pid_t: UInt64] {
-        var result: [pid_t: UInt64] = [:]
-        var gpus: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOAccelerator"), &gpus) == KERN_SUCCESS else { return [:] }
-        defer { IOObjectRelease(gpus) }
-        while case let gpu = IOIteratorNext(gpus), gpu != 0 {
-            defer { IOObjectRelease(gpu) }
-            var clients: io_iterator_t = 0
-            guard IORegistryEntryGetChildIterator(gpu, kIOServicePlane, &clients) == KERN_SUCCESS else { continue }
-            defer { IOObjectRelease(clients) }
-            while case let client = IOIteratorNext(clients), client != 0 {
-                defer { IOObjectRelease(client) }
-                // "pid 33620, python3.14"
-                guard let creator = IORegistryEntryCreateCFProperty(client, "IOUserClientCreator" as CFString, kCFAllocatorDefault, 0)?
-                        .takeRetainedValue() as? String,
-                      creator.hasPrefix("pid "), let pid = pid_t(creator.dropFirst(4).prefix { $0.isNumber }),
-                      let usage = IORegistryEntryCreateCFProperty(client, "AppUsage" as CFString, kCFAllocatorDefault, 0)?
-                        .takeRetainedValue() as? [[String: Any]] else { continue }
-                result[pid, default: 0] += usage.reduce(0) { $0 + ((($1["accumulatedGPUTime"]) as? NSNumber)?.uint64Value ?? 0) }
-            }
-        }
-        return result
     }
 
     /// Names a process by its command line: "/…/05a-forward-pass/.venv/bin/python -m ipykernel_launcher …" is

@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     @Published var gpu: GPUInfo?
     @Published var disk: DiskInfo?
     @Published var temps = Temperatures()
+    @Published var power: Double?                // W, whole Mac; nil: no such sensor
     @Published var interface: (name: String, ip: String?)?
     @Published var history: [Sample] = []
     @Published var processes: [ProcGroup] = []
@@ -43,6 +44,7 @@ final class AppModel: ObservableObject {
     let bootTime = Sampler.bootTime()
     private let sampler = Sampler()
     private let thermal = Thermal()
+    private let powerMeter = PowerMeter()
     private let psQueue = DispatchQueue(label: "sysload.ps", qos: .utility)
     private var psRunning = false
     private let ollamaClient = Ollama()
@@ -54,7 +56,7 @@ final class AppModel: ObservableObject {
     private var ticks = 0
     private var timer: Timer?
 
-    /// Details (processes, GPU, disk, interface, Ollama stats) are read only while the panel is open.
+    /// Details (processes, disk, interface, Ollama stats) are read only while the panel is open.
     var panelOpen = false {
         didSet {
             guard panelOpen && !oldValue else { return }
@@ -74,7 +76,9 @@ final class AppModel: ObservableObject {
     func tick() {
         now = Date()
         cpu = sampler.cpu()
+        gpu = sampler.gpu()
         temps = thermal.read(cpuOnly: !panelOpen)
+        power = powerMeter.watts()
         memory = sampler.memory()
         (net, netTotals) = sampler.network()
         history.append(Sample(t: now, cpuUser: cpu.user, cpuSystem: cpu.system, cpuTemp: temps.cpuMax,
@@ -111,7 +115,6 @@ final class AppModel: ObservableObject {
 
     func refreshDetails() {
         load = Sampler.loadAverage()
-        gpu = Sampler.gpu()
         disk = Sampler.disk()
         interface = Sampler.primaryInterface()
         refreshOllama(details: true)
