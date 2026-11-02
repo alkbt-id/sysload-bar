@@ -40,7 +40,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             popover.performClose(nil)
         } else {
             model.panelOpen = true
-            popover.contentViewController = NSHostingController(rootView: PopoverView().environmentObject(model))
+            let screen = button.window?.screen ?? NSScreen.main
+            let height = min(PopoverView.fullHeight, (screen?.visibleFrame.height ?? PopoverView.fullHeight) - 20)
+            let host = NSHostingController(rootView: PopoverView(height: height).environmentObject(model))
+            // The size is set before the show instead: a size SwiftUI reports later, after the popover
+            // is placed, leaves it off center or pushed up past the top of the screen.
+            host.sizingOptions = []
+            popover.contentViewController = host
+            popover.contentSize = NSSize(width: PopoverView.width, height: height)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
             NSApp.activate(ignoringOtherApps: true)

@@ -22,7 +22,7 @@ enum Snapshot {
             let suffix = appearance == .aqua ? "light" : "dark"
             let host = NSHostingView(rootView: PopoverView(height: PopoverView.fullHeight).environmentObject(model)
                 .background(Color(nsColor: .windowBackgroundColor)))
-            host.frame = NSRect(x: 0, y: 0, width: 380, height: PopoverView.fullHeight)
+            host.frame = NSRect(x: 0, y: 0, width: PopoverView.width, height: PopoverView.fullHeight)
             host.appearance = NSAppearance(named: appearance)
             let win = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
             win.appearance = NSAppearance(named: appearance)

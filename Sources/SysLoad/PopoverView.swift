@@ -5,9 +5,10 @@ import UniformTypeIdentifiers
 
 struct PopoverView: View {
     @EnvironmentObject var model: AppModel
+    static let width: CGFloat = 380
     /// Room for every section; on a smaller screen the panel is shorter and scrolls.
     static let fullHeight: CGFloat = 1100
-    var height = min(fullHeight, (NSScreen.main?.visibleFrame.height ?? fullHeight) - 20)
+    let height: CGFloat
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,7 +37,7 @@ struct PopoverView: View {
             Divider()
             Footer().padding(.horizontal, 16).padding(.vertical, 10)
         }
-        .frame(width: 380, height: height)
+        .frame(width: Self.width, height: height)
     }
 
     private var rings: some View {
