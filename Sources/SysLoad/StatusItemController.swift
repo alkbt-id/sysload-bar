@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Menu bar item: "LAN" over "WI-FI", gray when off, blue when the VPN goes over it, green otherwise; then "CPU 15%" over "GPU 24%", then "PWR 15W" (the whole Mac)
+/// Menu bar item: "LAN" over "WI-FI", gray when off, blue when the VPN goes over it, green when it goes over the other,
+/// red when the VPN is off; then "CPU 15%" over "GPU 24%", then "PWR 15W" (the whole Mac)
 /// over "TMP 50°" (hottest CPU die sensor), in two small lines, with Ollama and PyTorch indicators before the numbers
 /// while they run.
 /// Everything else lives in the panel.
@@ -98,6 +99,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             }
         }
         return "Кабель" + (n.cableName.map { " (\($0))" } ?? "") + ": \(state(n.cable)) · Wi-Fi: \(state(n.wifi))"
+            + (n.tunnel == nil ? " · VPN выключен" : "")
     }
 
     /// "Ollama отвечает: ", or within the hold after a reply "Ollama, ответ 12 с назад: ".
@@ -124,7 +126,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
         // Network, left-aligned: "LAN" over "WI-FI", colored by state.
         let netRows = [("LAN", network.cable), ("WI-FI", network.wifi)].map { text, link in
-            NSAttributedString(string: text, attributes: [.font: netFont, .foregroundColor: Palette.link(link)])
+            NSAttributedString(string: text, attributes: [.font: netFont, .foregroundColor: Palette.link(link, vpn: network.tunnel != nil)])
         }
         let glyphsLeft = ceil(netRows.map { $0.size().width }.max() ?? 0) + 8
         // Each column: its widest value, then a line per baseline as (label, text, load for color).
