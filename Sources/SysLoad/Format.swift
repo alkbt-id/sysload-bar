@@ -49,6 +49,15 @@ enum Palette {
         fraction < 0.7 ? .labelColor : nsColor(fraction)
     }
 
+    /// A network link in the menu bar: gray when off, blue when the VPN goes over it, green otherwise.
+    static func link(_ state: NetStatus.Link) -> NSColor {
+        switch state {
+        case .off: .tertiaryLabelColor
+        case .up: nsColor(0)
+        case .vpn: NSColor(srgbRed: 0.27, green: 0.55, blue: 0.95, alpha: 1)
+        }
+    }
+
     static let user = Color(.sRGB, red: 0.27, green: 0.55, blue: 0.95)
     static let system = Color(.sRGB, red: 0.92, green: 0.35, blue: 0.30)
     static let temperature = Color(.sRGB, red: 0.98, green: 0.70, blue: 0.15)

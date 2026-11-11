@@ -14,7 +14,7 @@ final class AppModel: ObservableObject {
 
     static let interval: TimeInterval = 2
     static let historyLength = 90                // 3 minutes at 2 s
-    /// Ollama's and PyTorch's processes are re-listed every 3rd tick.
+    /// Ollama's and PyTorch's processes, and the network connection, are re-read every 3rd tick.
     static let ollamaEvery = 3
     /// An indicator stays filled this long after a model stops generating, so a short reply isn't missed.
     static let ollamaHold: TimeInterval = 60
@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var temps = Temperatures()
     @Published var power: Double?                // W, whole Mac; nil: no such sensor
     @Published var interface: (name: String, ip: String?)?
+    @Published var network = NetStatus()         // cable and Wi-Fi: off, up, or carrying the VPN
     @Published var history: [Sample] = []
     @Published var processes: [ProcGroup] = []
     @Published var ollama: OllamaStatus?         // nil: not running
@@ -45,6 +46,7 @@ final class AppModel: ObservableObject {
     private let sampler = Sampler()
     private let thermal = Thermal()
     private let powerMeter = PowerMeter()
+    private let linkMonitor = NetLinkMonitor()
     private let psQueue = DispatchQueue(label: "sysload.ps", qos: .utility)
     private var psRunning = false
     private let ollamaClient = Ollama()
@@ -81,6 +83,7 @@ final class AppModel: ObservableObject {
         power = powerMeter.watts()
         memory = sampler.memory()
         (net, netTotals) = sampler.network()
+        linkMonitor.record(sampler.interfaceBytes)
         history.append(Sample(t: now, cpuUser: cpu.user, cpuSystem: cpu.system, cpuTemp: temps.cpuMax,
                               memory: memory.fraction, rx: net.rx, tx: net.tx))
         if history.count > Self.historyLength { history.removeFirst(history.count - Self.historyLength) }
@@ -89,6 +92,7 @@ final class AppModel: ObservableObject {
             // With the panel closed the API is asked only when needed, since each request is a line in Ollama's log:
             // when its processes change (a model loads or unloads) and once more after that, because a runner starts
             // before its model shows in the API; while a model works; and once a minute.
+            network = linkMonitor.read()
             let all = ProcInfo.all()
             torchProcesses.rescan(all)
             let changed = ollamaProcesses.rescan(all)

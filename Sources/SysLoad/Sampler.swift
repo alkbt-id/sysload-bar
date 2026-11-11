@@ -56,6 +56,8 @@ final class Sampler {
     private var lastTicks: [UInt32]?
     private var lastNet: (counters: NetCounters, at: Date)?
     private var lastGPU: (times: [pid_t: UInt64], at: Date)?
+    /// Bytes in and out per physical interface since boot, as of the last `network()`.
+    private(set) var interfaceBytes: [String: UInt64] = [:]
 
     // MARK: CPU
 
@@ -120,7 +122,8 @@ final class Sampler {
     /// Current rate and totals since boot over physical interfaces.
     func network() -> (rate: NetRate, totals: NetCounters) {
         let now = Date()
-        let c = Self.netCounters()
+        let (c, perInterface) = Self.netCounters()
+        interfaceBytes = perInterface
         defer { lastNet = (c, now) }
         guard let prev = lastNet else { return (NetRate(), c) }
         let dt = now.timeIntervalSince(prev.at)
@@ -135,14 +138,15 @@ final class Sampler {
     private static let skippedPrefixes = ["lo", "utun", "ipsec", "awdl", "llw", "gif", "stf", "bridge", "anpi", "ap"]
 
     /// 64-bit byte counters from NET_RT_IFLIST2 (getifaddrs only has 32-bit ones, which wrap at 4 GB).
-    static func netCounters() -> NetCounters {
+    static func netCounters() -> (total: NetCounters, perInterface: [String: UInt64]) {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
         var len = 0
-        guard sysctl(&mib, 6, nil, &len, nil, 0) == 0, len > 0 else { return NetCounters() }
+        guard sysctl(&mib, 6, nil, &len, nil, 0) == 0, len > 0 else { return (NetCounters(), [:]) }
         var buf = [UInt8](repeating: 0, count: len)
-        guard sysctl(&mib, 6, &buf, &len, nil, 0) == 0 else { return NetCounters() }
+        guard sysctl(&mib, 6, &buf, &len, nil, 0) == 0 else { return (NetCounters(), [:]) }
 
         var out = NetCounters()
+        var perInterface: [String: UInt64] = [:]
         var name = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
         buf.withUnsafeBytes { raw in
             var off = 0
@@ -156,13 +160,14 @@ final class Sampler {
                         if !skippedPrefixes.contains(where: ifname.hasPrefix) {
                             out.rx += h2.ifm_data.ifi_ibytes
                             out.tx += h2.ifm_data.ifi_obytes
+                            perInterface[ifname] = h2.ifm_data.ifi_ibytes &+ h2.ifm_data.ifi_obytes
                         }
                     }
                 }
                 off += Int(hdr.ifm_msglen)
             }
         }
-        return out
+        return (out, perInterface)
     }
 
     /// Interface that carries the default route (e.g. "en0", or "utun4" with a VPN on) and its IPv4.

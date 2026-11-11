@@ -32,7 +32,8 @@ enum Snapshot {
             save(host, to: dir.appendingPathComponent("panel-\(suffix).png"))
 
             let img = StatusItemController.image(cpu: model.cpu.total, gpu: model.gpu?.utilization, power: model.power,
-                                                 temperature: model.temps.cpuMax, ollama: model.ollamaState, torch: model.torchState)
+                                                 temperature: model.temps.cpuMax, network: model.network,
+                                                 ollama: model.ollamaState, torch: model.torchState)
             let bar = NSView(frame: NSRect(x: 0, y: 0, width: img.size.width + 24, height: 24))
             bar.appearance = NSAppearance(named: appearance)
             bar.wantsLayer = true
@@ -73,6 +74,7 @@ enum Snapshot {
         m.power = 23
         m.disk = DiskInfo(total: 1_000_000_000_000, free: 550_000_000_000)
         m.interface = ("en0", "192.168.1.24")
+        m.network = NetStatus(cable: .vpn, wifi: .up, cableName: "USB 10/100/1000 LAN", tunnel: "utun4")
         m.now = now
         m.ollama = OllamaStatus(
             version: "0.40.8",

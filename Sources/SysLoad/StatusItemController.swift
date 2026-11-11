@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Menu bar item: "CPU 15%" over "GPU 24%", then a column with "PWR 15W" (the whole Mac) over "TMP 50°" (hottest CPU die
-/// sensor), in two small lines, with Ollama and PyTorch indicators to the left while they run.
+/// Menu bar item: "LAN" over "WI-FI", gray when off, blue when the VPN goes over it, green otherwise; then "CPU 15%" over "GPU 24%", then "PWR 15W" (the whole Mac)
+/// over "TMP 50°" (hottest CPU die sensor), in two small lines, with Ollama and PyTorch indicators before the numbers
+/// while they run.
 /// Everything else lives in the panel.
 @MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
@@ -64,9 +65,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func render() {
         guard let button = item.button else { return }
         button.image = Self.image(cpu: model.cpu.total, gpu: model.gpu?.utilization, power: model.power,
-                                  temperature: model.temps.cpuMax, ollama: model.ollamaState, torch: model.torchState)
+                                  temperature: model.temps.cpuMax, network: model.network,
+                                  ollama: model.ollamaState, torch: model.torchState)
         var tip = ["ЦП \(Fmt.percent(model.cpu.total)) · \(Fmt.degrees(model.temps.cpuMax)) · "
-            + "GPU \(model.gpu.map { Fmt.percent($0.utilization) } ?? "—") · Mac \(Fmt.watts(model.power))"]
+            + "GPU \(model.gpu.map { Fmt.percent($0.utilization) } ?? "—") · Mac \(Fmt.watts(model.power))", network]
         if let o = model.ollama, let state = model.ollamaState {
             let line = switch state {
             case .noModel: "Ollama: ни одна модель не загружена"
@@ -85,6 +87,19 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         button.toolTip = tip.joined(separator: "\n")
     }
 
+    /// "Кабель (USB 10/100/1000 LAN): через него VPN · Wi-Fi: подключён".
+    private var network: String {
+        let n = model.network
+        func state(_ link: NetStatus.Link) -> String {
+            switch link {
+            case .off: "отключён"
+            case .up: "подключён"
+            case .vpn: "через него VPN" + (n.tunnel.map { " (\($0))" } ?? "")
+            }
+        }
+        return "Кабель" + (n.cableName.map { " (\($0))" } ?? "") + ": \(state(n.cable)) · Wi-Fi: \(state(n.wifi))"
+    }
+
     /// "Ollama отвечает: ", or within the hold after a reply "Ollama, ответ 12 с назад: ".
     private func activity(busy: Bool) -> String {
         guard busy, let at = model.ollamaActiveAt else { return "Ollama: " }
@@ -99,10 +114,19 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         return ago < AppModel.interval ? "PyTorch считает: " : "PyTorch, считал \(Fmt.duration(ago)) назад: "
     }
 
-    static func image(cpu: Double, gpu: Double?, power: Double?, temperature: Double?, ollama: OllamaState? = nil, torch: TorchState? = nil) -> NSImage {
+    static func image(cpu: Double, gpu: Double?, power: Double?, temperature: Double?, network: NetStatus,
+                      ollama: OllamaState? = nil, torch: TorchState? = nil) -> NSImage {
         let labelFont = NSFont.systemFont(ofSize: 8, weight: .semibold)
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold)
+        let netFont = NSFont.systemFont(ofSize: 10, weight: .bold)
         let baselines: [CGFloat] = [12, 2]
+        let labelAttributes: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: NSColor.secondaryLabelColor]
+
+        // Network, left-aligned: "LAN" over "WI-FI", colored by state.
+        let netRows = [("LAN", network.cable), ("WI-FI", network.wifi)].map { text, link in
+            NSAttributedString(string: text, attributes: [.font: netFont, .foregroundColor: Palette.link(link)])
+        }
+        let glyphsLeft = ceil(netRows.map { $0.size().width }.max() ?? 0) + 8
         // Each column: its widest value, then a line per baseline as (label, text, load for color).
         let columns: [(widest: String, rows: [(String, String, Double)])] = [
             ("100%", [("CPU", Fmt.percent(cpu), cpu), ("GPU", gpu.map(Fmt.percent) ?? "—", gpu ?? 0)]),
@@ -110,9 +134,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         ]
 
         let glyphs = [ollama.flatMap(indicator), torch.flatMap(indicator)].compactMap { $0 }
-        var right = glyphs.reduce(-6) { $0 + ceil($1.size.width) + 4 }
+        var right = glyphs.reduce(glyphsLeft - 6) { $0 + ceil($1.size.width) + 4 }
         let cells = columns.map { column in
-            let labels = column.rows.map { NSAttributedString(string: $0.0, attributes: [.font: labelFont, .foregroundColor: NSColor.secondaryLabelColor]) }
+            let labels = column.rows.map { NSAttributedString(string: $0.0, attributes: labelAttributes) }
             let values = column.rows.map { NSAttributedString(string: $0.1, attributes: [.font: valueFont, .foregroundColor: Palette.barColor($0.2)]) }
             let left = right + 6
             let labelWidth = ceil(labels.map { $0.size().width }.max() ?? 0)
@@ -124,7 +148,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
         // draw(at:) takes the line's bottom-left corner; the baseline sits `descender` above it.
         let img = NSImage(size: NSSize(width: width, height: 22), flipped: false) { _ in
-            var x: CGFloat = 0
+            for (i, baseline) in baselines.enumerated() { netRows[i].draw(at: NSPoint(x: 0, y: baseline + netFont.descender)) }
+            var x = glyphsLeft
             for glyph in glyphs {
                 glyph.draw(in: NSRect(origin: NSPoint(x: x, y: (22 - glyph.size.height) / 2), size: glyph.size))
                 x += ceil(glyph.size.width) + 4
