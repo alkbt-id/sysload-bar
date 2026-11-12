@@ -1,13 +1,21 @@
 import Foundation
 import SystemConfiguration
 
-/// Cable and Wi-Fi: each is off, up, or up with the VPN going over it.
+/// Cable and Wi-Fi: each is off, up, or up with the VPN or a proxy going over it.
 struct NetStatus: Equatable {
-    enum Link: Equatable { case off, up, vpn }
+    enum Link: Equatable {
+        case off, up, vpn, proxy
+        /// The VPN or the proxy goes over this link.
+        var carries: Bool { self == .vpn || self == .proxy }
+    }
     var cable = Link.off
     var wifi = Link.off
     var cableName: String?    // the service's name in System Settings → Network: "USB 10/100/1000 LAN"
     var tunnel: String?       // the VPN's interface ("utun5") while the default route goes into one
+    var proxy: String?        // the system proxy that's on: "127.0.0.1:7890", or "PAC" for an auto-config file
+
+    /// Traffic goes through a VPN or a proxy, so the links aren't red.
+    var secured: Bool { tunnel != nil || proxy != nil }
 }
 
 /// Finds which connections are up and which one a VPN goes over. With a cable and Wi-Fi both up the system's
@@ -32,7 +40,7 @@ final class NetLinkMonitor {
     func read() -> NetStatus {
         var out = NetStatus()
         guard let store,
-              let all = SCDynamicStoreCopyMultiple(store, ["State:/Network/Global/IPv4", "Setup:/Network/Global/IPv4"] as CFArray,
+              let all = SCDynamicStoreCopyMultiple(store, ["State:/Network/Global/IPv4", "Setup:/Network/Global/IPv4", "State:/Network/Global/Proxies"] as CFArray,
                                                    ["State:/Network/Service/[^/]+/IPv4", "Setup:/Network/Service/[^/]+(/Interface)?"] as CFArray)
                 as? [String: Any] else { return out }
         func dict(_ key: String) -> [String: Any]? { all[key] as? [String: Any] }
@@ -59,15 +67,33 @@ final class NetLinkMonitor {
 
         // The default route goes into a VPN when its interface isn't one of the devices.
         out.tunnel = primary.flatMap { links[$0] == nil ? $0 : nil }
+        out.proxy = Self.proxy(dict("State:/Network/Global/Proxies"))
+        // A VPN takes every program's traffic, a proxy only that of programs that use it, so the VPN wins when both are on.
+        let carried: NetStatus.Link = out.tunnel != nil ? .vpn : out.proxy != nil ? .proxy : .up
         for (device, link) in links {
-            let state: NetStatus.Link = out.tunnel != nil && device == carrier ? .vpn : .up
+            let state = device == carrier ? carried : .up
             if link.wifi {
-                if out.wifi != .vpn { out.wifi = state }
-            } else if out.cable != .vpn {
+                if !out.wifi.carries { out.wifi = state }
+            } else if !out.cable.carries {
                 out.cable = state
                 out.cableName = link.name
             }
         }
         return out
+    }
+
+    /// The proxy the Mac uses now (its main connection's settings): "127.0.0.1:7890" for HTTPS, HTTP or SOCKS,
+    /// "PAC" for an auto-config file, nil when none is on. Proxy apps (Happ, Shadowrocket, Clash) turn it on in
+    /// proxy mode instead of sending everything into a tunnel, and turn it off when they disconnect.
+    nonisolated static func proxy(_ settings: [String: Any]?) -> String? {
+        guard let s = settings else { return nil }
+        func on(_ kind: String) -> Bool { (s[kind + "Enable"] as? Int ?? 0) != 0 }
+        for kind in ["HTTPS", "HTTP", "SOCKS"] where on(kind) {
+            if let host = s[kind + "Proxy"] as? String, !host.isEmpty {
+                return host + ((s[kind + "Port"] as? Int).map { ":\($0)" } ?? "")
+            }
+        }
+        if on("ProxyAutoConfig"), let url = s["ProxyAutoConfigURLString"] as? String, !url.isEmpty { return "PAC" }
+        return nil
     }
 }

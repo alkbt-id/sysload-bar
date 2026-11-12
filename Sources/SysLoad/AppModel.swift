@@ -29,7 +29,7 @@ final class AppModel: ObservableObject {
     @Published var temps = Temperatures()
     @Published var power: Double?                // W, whole Mac; nil: no such sensor
     @Published var interface: (name: String, ip: String?)?
-    @Published var network = NetStatus()         // cable and Wi-Fi: off, up, or carrying the VPN
+    @Published var network = NetStatus()         // cable and Wi-Fi: off, up, or carrying the VPN or proxy
     @Published var history: [Sample] = []
     @Published var processes: [ProcGroup] = []
     @Published var ollama: OllamaStatus?         // nil: not running

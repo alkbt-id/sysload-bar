@@ -49,13 +49,14 @@ enum Palette {
         fraction < 0.7 ? .labelColor : nsColor(fraction)
     }
 
-    /// A network link in the menu bar: gray when off, blue when the VPN goes over it,
-    /// green when the VPN goes over the other one, red when there's no VPN at all.
+    /// A network link in the menu bar: gray when off, blue when the VPN goes over it, violet when a proxy does
+    /// (only programs that use the proxy go through it), green when they go over the other one, red when there's neither.
     static func link(_ state: NetStatus.Link, vpn: Bool) -> NSColor {
         switch state {
         case .off: .tertiaryLabelColor
         case .up: nsColor(vpn ? 0 : 1)
         case .vpn: NSColor(srgbRed: 0.27, green: 0.55, blue: 0.95, alpha: 1)
+        case .proxy: NSColor(srgbRed: 0.60, green: 0.50, blue: 0.86, alpha: 1)   // muted, so it doesn't pull the eye
         }
     }
 
